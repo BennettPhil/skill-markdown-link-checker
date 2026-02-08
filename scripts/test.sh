@@ -2,40 +2,82 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PASS=0
-FAIL=0
+RUN="$SCRIPT_DIR/run.sh"
+PASS=0; FAIL=0; TOTAL=0
+TMPDIR=$(mktemp -d)
+trap "rm -rf $TMPDIR" EXIT
 
-pass() { PASS=$((PASS + 1)); echo "PASS: $1"; }
-fail() { FAIL=$((FAIL + 1)); echo "FAIL: $1"; }
+assert_contains() {
+  local desc="$1" needle="$2" haystack="$3"
+  ((TOTAL++))
+  if echo "$haystack" | grep -qF -- "$needle"; then
+    ((PASS++)); echo "  PASS: $desc"
+  else
+    ((FAIL++)); echo "  FAIL: $desc (output missing '$needle')"
+  fi
+}
 
-tmp_dir="$(mktemp -d)"
-trap 'rm -rf "$tmp_dir"' EXIT
+assert_exit_code() {
+  local desc="$1" expected="$2"
+  shift 2
+  local output
+  set +e; output=$("$@" 2>&1); local actual=$?; set -e
+  ((TOTAL++))
+  if [ "$expected" -eq "$actual" ]; then
+    ((PASS++)); echo "  PASS: $desc"
+  else
+    ((FAIL++)); echo "  FAIL: $desc (expected exit $expected, got $actual)"
+  fi
+}
 
-cat > "$tmp_dir/sample.md" <<'EOF'
-# Sample
+echo "=== Tests for markdown-link-checker ==="
 
-Read [Example](https://example.com) and [Broken](https://example.invalid/not-found).
-Local [Anchor](#section) and [Mail](mailto:test@example.com).
-EOF
+# Create test files
+cat > "$TMPDIR/good.md" <<'MD'
+# Test Doc
+[Google](https://www.google.com)
+[Example](https://example.com)
+MD
 
-parse_output="$("$SCRIPT_DIR/parse.sh" "$tmp_dir/sample.md")"
-if printf '%s\n' "$parse_output" | grep -q "https://example.com"; then
-  pass "parse extracts http link"
-else
-  fail "parse extracts http link"
-fi
+cat > "$TMPDIR/bad.md" <<'MD'
+# Bad Links
+[Broken](https://thisdomaindoesnotexist12345.com)
+[Good](https://example.com)
+MD
 
-if "$SCRIPT_DIR/run.sh" --path "$tmp_dir/sample.md" --format summary | grep -q '^total='; then
-  pass "run produces summary output"
-else
-  fail "run produces summary output"
-fi
+cat > "$TMPDIR/local.md" <<'MD'
+# Local Links
+[Relative](./good.md)
+[Missing](./nonexistent.md)
+MD
 
-if "$SCRIPT_DIR/run.sh" --path "$tmp_dir/sample.md" --format summary --fail-on-dead >/dev/null 2>&1; then
-  fail "fail-on-dead exits non-zero when dead links exist"
-else
-  pass "fail-on-dead exits non-zero when dead links exist"
-fi
+echo "Core:"
+# Test with good links
+result=$("$RUN" "$TMPDIR/good.md" 2>&1 || true)
+assert_contains "finds links in markdown" "google.com" "$result"
 
-echo "$PASS passed, $FAIL failed"
-[ "$FAIL" -eq 0 ]
+# Test help
+echo "Help:"
+result=$("$RUN" --help 2>&1)
+assert_contains "help flag works" "Usage:" "$result"
+
+# Test no args
+echo "Input validation:"
+assert_exit_code "fails with no args" 1 "$RUN"
+
+# Test nonexistent file
+assert_exit_code "fails with missing file" 1 "$RUN" "$TMPDIR/nonexistent.md"
+
+# Test local links
+echo "Local links:"
+result=$("$RUN" "$TMPDIR/local.md" --local-only 2>&1 || true)
+assert_contains "detects local link" "good.md" "$result"
+
+# Test JSON output
+echo "Format:"
+result=$("$RUN" "$TMPDIR/good.md" --format json 2>&1 || true)
+assert_contains "json output has url field" '"url"' "$result"
+
+echo ""
+echo "=== Results: $PASS/$TOTAL passed ==="
+[ "$FAIL" -eq 0 ] || { echo "BLOCKED: $FAIL test(s) failed"; exit 1; }

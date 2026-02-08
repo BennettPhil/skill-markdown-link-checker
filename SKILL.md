@@ -1,62 +1,72 @@
 ---
 name: markdown-link-checker
-description: Check markdown links in files or folders with composable Unix scripts.
+description: Scans markdown files for dead links (remote URLs and local file references) with concurrent checking.
 version: 0.1.0
 license: Apache-2.0
 ---
 
-# Markdown Link Checker Skill
+# Markdown Link Checker
 
 ## Purpose
-This skill scans markdown files, extracts links, validates remote URLs, and reports alive, dead, and skipped links. It is designed as small composable scripts so each step can run independently or in pipelines.
 
-## Scripts Overview
-| Script | Purpose |
-| --- | --- |
-| `scripts/install.sh` | Checks required tools and validates environment readiness. |
-| `scripts/parse.sh` | Extracts markdown links from files/directories and emits TSV. |
-| `scripts/validate.sh` | Validates extracted links and emits normalized result TSV. |
-| `scripts/format.sh` | Formats validation results as summary, table, or raw output. |
-| `scripts/run.sh` | Main entrypoint that orchestrates parse -> validate -> format. |
-| `scripts/test.sh` | Runs basic checks to verify behavior and output. |
+Scan markdown files or directories for broken links. Checks both remote HTTP URLs (concurrently) and local file references. Reports dead links with file location and line numbers. Works on single files or entire doc directories.
 
-## Pipeline Examples
-Check a docs folder with default summary output:
+## Quick Start
 
 ```bash
-./scripts/run.sh --path docs
+$ ./scripts/run.sh README.md
+  ✓ [OK] https://example.com
+  ✗ [DEAD] https://broken-link.example
+         README.md:5 "Some Link"
+
+Total: 2 links (1 ok, 1 dead)
 ```
 
-Emit a readable table:
+## Usage Examples
+
+### Check a Directory
 
 ```bash
-./scripts/run.sh --path docs --format table
+$ ./scripts/run.sh docs/
 ```
 
-Use utilities independently:
+### JSON Output
 
 ```bash
-./scripts/parse.sh docs | ./scripts/validate.sh --timeout 8 | ./scripts/format.sh --format summary
+$ ./scripts/run.sh README.md --format json
 ```
 
-## Inputs and Outputs
-- `scripts/parse.sh`
-- Input: markdown file path(s), directory path(s), or stdin markdown content
-- Output: TSV rows `source_file<TAB>url`
+### Local Links Only
 
-- `scripts/validate.sh`
-- Input: TSV from stdin or file path argument
-- Output: TSV rows `source_file<TAB>url<TAB>result<TAB>http_code<TAB>note`
+```bash
+$ ./scripts/run.sh docs/ --local-only
+```
 
-- `scripts/format.sh`
-- Input: validation TSV from stdin or file path argument
-- Output: summary text, table, or raw TSV
+### Adjust Concurrency
 
-- `scripts/run.sh`
-- Input: one or more `--path` values
-- Output: formatted report to stdout
-- Exit code: `0` on success, `2` if `--fail-on-dead` and dead links found
+```bash
+$ ./scripts/run.sh docs/ --concurrency 10 --timeout 5
+```
 
-## Environment Variables
-- `MLC_TIMEOUT` - Default HTTP timeout in seconds for `validate.sh` and `run.sh` (default: `10`)
-- `MLC_USER_AGENT` - User-Agent header for HTTP checks (default: `markdown-link-checker/0.1.0`)
+## Options Reference
+
+| Flag              | Default | Description                         |
+|-------------------|---------|-------------------------------------|
+| `--format FMT`    | text    | Output format: text, json           |
+| `--local-only`    | false   | Only check local file references    |
+| `--remote-only`   | false   | Only check remote URLs              |
+| `--concurrency N` | 5       | Max concurrent HTTP requests        |
+| `--timeout N`     | 10      | Request timeout in seconds          |
+| `--help`          |         | Show usage                          |
+
+## Error Handling
+
+| Exit Code | Meaning             |
+|-----------|---------------------|
+| 0         | All links OK        |
+| 1         | Usage/input error   |
+| 2         | Dead links found    |
+
+## Validation
+
+Run `scripts/test.sh` to verify correctness (6 assertions).
